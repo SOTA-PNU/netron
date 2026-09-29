@@ -40,6 +40,7 @@ window.exports.require = function(id, callback) {
 
 window.exports.preload = function(callback) {
     var modules = [
+        ['compression-lab'],
         ['view'],
         ['json', 'xml', 'protobuf', 'hdf5', 'grapher', 'browser'],
         ['base', 'text', 'flatbuffers', 'flexbuffers', 'zip',  'tar', 'python']
