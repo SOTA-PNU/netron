@@ -1,0 +1,46 @@
+name: Compression Lab Offline Bundle
+
+on:
+  push:
+    branches: [ feature/compression-lab ]
+    paths:
+      - 'source/**'
+      - 'tools/create_offline_bundle.py'
+      - 'tools/serve_compression_lab.py'
+      - 'package.json'
+      - '.github/workflows/compression-lab-offline.yml'
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Create npm-free offline bundle
+        run: python tools/create_offline_bundle.py
+
+      - name: Verify bundle files
+        run: |
+          test -f dist/compression-lab-offline/index.html
+          test -f dist/compression-lab-offline/compression-lab.js
+          test -f dist/compression-lab-offline/compression.js
+          test -f dist/compression-lab-offline/serve.py
+          test -f dist/compression-lab-offline/README.txt
+
+      - name: Upload classroom bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: compression-lab-offline
+          path: dist/compression-lab-offline/
+          if-no-files-found: error
+          retention-days: 30
