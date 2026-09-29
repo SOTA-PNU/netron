@@ -169,7 +169,7 @@ lab.attach = (sidebar) => {
 
     const note = document.createElement('div');
     note.className = 'compression-lab-note';
-    note.textContent = 'Educational working copy only. The original model file is not overwritten. For class, select the final Dense layer and inspect its kernel weights.';
+    note.textContent = 'Educational preview only. The original model file is never overwritten. For the main class exercise, select the final Dense layer and use its kernel tensor.';
     root.appendChild(note);
 
     const tensorRow = document.createElement('div');
@@ -181,7 +181,8 @@ lab.attach = (sidebar) => {
     entries.forEach((entry, index) => {
         const option = document.createElement('option');
         option.value = String(index);
-        option.textContent = `${entry.name} (${lab.shape(entry)})`;
+        const recommended = /kernel|weight/i.test(entry.name) ? ' · recommended' : '';
+        option.textContent = `${entry.name} (${lab.shape(entry)})${recommended}`;
         selector.appendChild(option);
     });
     const preferred = entries.findIndex((entry) => /kernel|weight/i.test(entry.name));
@@ -189,6 +190,10 @@ lab.attach = (sidebar) => {
     tensorRow.appendChild(tensorLabel);
     tensorRow.appendChild(selector);
     root.appendChild(tensorRow);
+
+    const tensorHelp = document.createElement('div');
+    tensorHelp.className = 'compression-lab-note';
+    root.appendChild(tensorHelp);
 
     const info = document.createElement('div');
     info.className = 'compression-lab-summary';
@@ -227,7 +232,7 @@ lab.attach = (sidebar) => {
     threshold.setAttribute('aria-label', 'Pruning threshold');
     const applyPruning = document.createElement('button');
     applyPruning.type = 'button';
-    applyPruning.textContent = 'Apply to working copy';
+    applyPruning.textContent = 'Apply Pruning';
     const resetPruning = document.createElement('button');
     resetPruning.type = 'button';
     resetPruning.textContent = 'Reset';
@@ -237,10 +242,15 @@ lab.attach = (sidebar) => {
     thresholdRow.appendChild(resetPruning);
     pruningPanel.appendChild(thresholdRow);
 
+    const pruningNote = document.createElement('div');
+    pruningNote.className = 'compression-lab-note';
+    pruningNote.textContent = 'Each click recalculates pruning from the original tensor. Pruning is not accumulated across clicks.';
+    pruningPanel.appendChild(pruningNote);
+
     const pruningSummary = document.createElement('div');
     pruningSummary.className = 'compression-lab-summary';
     pruningPanel.appendChild(pruningSummary);
-    const pruningTable = lab.table(document, ['Index', 'Before', 'After']);
+    const pruningTable = lab.table(document, ['Index', 'Original', 'Pruned']);
     pruningPanel.appendChild(pruningTable.wrapper);
 
     const quantizeRow = document.createElement('div');
@@ -255,7 +265,7 @@ lab.attach = (sidebar) => {
     weightIndex.setAttribute('aria-label', 'Weight index');
     const applyQuantization = document.createElement('button');
     applyQuantization.type = 'button';
-    applyQuantization.textContent = 'Quantize working copy';
+    applyQuantization.textContent = 'Apply Quantization';
     const resetQuantization = document.createElement('button');
     resetQuantization.type = 'button';
     resetQuantization.textContent = 'Reset';
@@ -265,13 +275,20 @@ lab.attach = (sidebar) => {
     quantizeRow.appendChild(resetQuantization);
     quantizationPanel.appendChild(quantizeRow);
 
+    const quantizationHelp = document.createElement('div');
+    quantizationHelp.className = 'compression-lab-note';
+    quantizationHelp.textContent = 'Quantization is applied to the whole selected tensor. Weight index only chooses one value to explain in detail.';
+    quantizationPanel.appendChild(quantizationHelp);
+
     const quantizationSummary = document.createElement('div');
     quantizationSummary.className = 'compression-lab-summary';
+    quantizationSummary.textContent = 'Press Apply Quantization to calculate the INT8 preview from the original FP32 tensor.';
     quantizationPanel.appendChild(quantizationSummary);
     const formula = document.createElement('div');
     formula.className = 'compression-lab-formula';
+    formula.textContent = 'No quantization result yet.';
     quantizationPanel.appendChild(formula);
-    const quantizationTable = lab.table(document, ['Index', 'FP32', 'INT8', 'Dequantized', '|Error|']);
+    const quantizationTable = lab.table(document, ['Index', 'FP32 Original', 'INT8', 'Dequantized', '|Error|']);
     quantizationPanel.appendChild(quantizationTable.wrapper);
     const quantizationNote = document.createElement('div');
     quantizationNote.className = 'compression-lab-note';
@@ -285,12 +302,21 @@ lab.attach = (sidebar) => {
 
     const state = {
         original: [],
-        working: [],
-        pruningBefore: [],
+        pruned: [],
         quantization: null
     };
 
-    const renderPruning = (before, after) => {
+    const updateTensorHelp = () => {
+        const entry = entries[selector.selectedIndex];
+        if (/bias/i.test(entry.name)) {
+            tensorHelp.textContent = 'bias contains one additive offset per output. It can be previewed here, but use kernel for the main pruning/quantization exercise.';
+        } else {
+            tensorHelp.textContent = 'kernel contains the connection weights between inputs and outputs. This is the recommended tensor for the class exercise.';
+        }
+    };
+
+    const renderPruning = (after) => {
+        const before = state.original;
         const zeroBefore = before.reduce((count, value) => count + (value === 0 ? 1 : 0), 0);
         const zeroAfter = after.reduce((count, value) => count + (value === 0 ? 1 : 0), 0);
         const sparsityBefore = before.length === 0 ? 0 : zeroBefore / before.length;
@@ -305,26 +331,37 @@ lab.attach = (sidebar) => {
     };
 
     const renderQuantization = () => {
-        const result = quantize(state.working);
-        state.quantization = result;
+        const result = state.quantization;
+        weightIndex.max = String(Math.max(0, state.original.length - 1));
+
+        if (!result) {
+            quantizationSummary.textContent = 'Press Apply Quantization to calculate the INT8 preview from the original FP32 tensor.';
+            formula.textContent = 'No quantization result yet.';
+            lab.fillTable(quantizationTable.body, []);
+            return;
+        }
+
         quantizationSummary.textContent = `min=${lab.format(result.minimum)}, max=${lab.format(result.maximum)}, scale=${lab.format(result.scale)}, zero point=${result.zeroPoint}`;
-        weightIndex.max = String(Math.max(0, state.working.length - 1));
+
         let selected = Number.parseInt(weightIndex.value, 10);
         if (!Number.isInteger(selected)) {
             selected = 0;
         }
-        selected = Math.max(0, Math.min(state.working.length - 1, selected));
+        selected = Math.max(0, Math.min(state.original.length - 1, selected));
         weightIndex.value = String(selected);
-        const real = state.working[selected];
+
+        const real = state.original[selected];
         const q = result.values[selected];
         const dequantized = result.dequantized[selected];
-        formula.textContent = `q = round(${lab.format(real)} / ${lab.format(result.scale)} + ${result.zeroPoint}) = ${q};  dequantized = (${q} - ${result.zeroPoint}) × ${lab.format(result.scale)} = ${lab.format(dequantized)}`;
+        const selectedError = result.error[selected];
+        formula.textContent = `index ${selected}: q = round(${lab.format(real)} / ${lab.format(result.scale)} + ${result.zeroPoint}) = ${q}; dequantized = (${q} - ${result.zeroPoint}) × ${lab.format(result.scale)} = ${lab.format(dequantized)}; |error| = ${lab.format(selectedError)}`;
+
         const rows = [];
-        const count = Math.min(lab.previewRows, state.working.length);
+        const count = Math.min(lab.previewRows, state.original.length);
         for (let index = 0; index < count; index++) {
             rows.push([
                 String(index),
-                lab.format(state.working[index]),
+                lab.format(state.original[index]),
                 String(result.values[index]),
                 lab.format(result.dequantized[index]),
                 lab.format(result.error[index])
@@ -351,11 +388,11 @@ lab.attach = (sidebar) => {
             const entry = entries[selector.selectedIndex];
             const values = await lab.load(entry);
             state.original = values.slice();
-            state.working = values.slice();
-            state.pruningBefore = values.slice();
+            state.pruned = values.slice();
             state.quantization = null;
+            updateTensorHelp();
             info.textContent = `Layer: ${node.name || (node.type ? node.type.name : '?')} · tensor: ${entry.name} · shape: ${lab.shape(entry)} · ${values.length.toLocaleString()} values`;
-            renderPruning(state.original, state.working);
+            renderPruning(state.pruned);
             renderQuantization();
             setEnabled(true);
         } catch (err) {
@@ -370,60 +407,54 @@ lab.attach = (sidebar) => {
         pruningPanel.hidden = false;
         quantizationPanel.hidden = true;
     });
+
     quantizationTab.addEventListener('click', () => {
         pruningTab.setAttribute('aria-selected', 'false');
         quantizationTab.setAttribute('aria-selected', 'true');
         pruningPanel.hidden = true;
         quantizationPanel.hidden = false;
-        if (state.working.length > 0) {
-            renderQuantization();
-        }
+        renderQuantization();
     });
+
     selector.addEventListener('change', () => {
         loadSelected();
     });
+
     applyPruning.addEventListener('click', () => {
         error.textContent = '';
         try {
             const value = Number(threshold.value);
-            state.pruningBefore = state.working.slice();
-            const result = prune(state.working, value);
-            state.working = result.values.slice();
-            renderPruning(state.pruningBefore, state.working);
-            renderQuantization();
+            const result = prune(state.original, value);
+            state.pruned = result.values.slice();
+            renderPruning(state.pruned);
         } catch (err) {
             error.textContent = err.message;
         }
     });
+
     resetPruning.addEventListener('click', () => {
-        state.working = state.original.slice();
-        state.pruningBefore = state.original.slice();
-        renderPruning(state.original, state.working);
-        renderQuantization();
+        state.pruned = state.original.slice();
+        renderPruning(state.pruned);
         error.textContent = '';
     });
+
     weightIndex.addEventListener('change', () => {
-        if (state.working.length > 0) {
-            renderQuantization();
-        }
+        renderQuantization();
     });
+
     applyQuantization.addEventListener('click', () => {
         error.textContent = '';
         try {
-            const result = quantize(state.working);
-            state.quantization = result;
-            state.working = result.dequantized.slice();
+            state.quantization = quantize(state.original);
             renderQuantization();
-            renderPruning(state.working, state.working);
         } catch (err) {
             error.textContent = err.message;
         }
     });
+
     resetQuantization.addEventListener('click', () => {
-        state.working = state.original.slice();
         state.quantization = null;
         renderQuantization();
-        renderPruning(state.original, state.working);
         error.textContent = '';
     });
 
