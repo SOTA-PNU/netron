@@ -27,6 +27,16 @@ def local_ip() -> str | None:
         sock.close()
 
 
+class NoCacheHTTPRequestHandler(SimpleHTTPRequestHandler):
+    """Serve classroom assets without browser caching during development."""
+
+    def end_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve Netron Compression Lab locally.")
     parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
@@ -43,8 +53,7 @@ def main() -> None:
         raise SystemExit(f"index.html not found in {root}")
 
     os.chdir(root)
-    handler = SimpleHTTPRequestHandler
-    server = ThreadingHTTPServer((args.host, args.port), handler)
+    server = ThreadingHTTPServer((args.host, args.port), NoCacheHTTPRequestHandler)
 
     print("Netron Compression Lab is running.")
     print(f"Local:   http://127.0.0.1:{args.port}")
