@@ -17,21 +17,43 @@ compression.prune = (values, threshold) => {
     };
 };
 
-compression.quantize = (values, qmin = -128, qmax = 127) => {
+compression.quantize = (values, bits = 8) => {
+    const supported = new Set([16, 8, 4, 2]);
+    if (!supported.has(bits)) {
+        throw new Error('Quantization precision must be INT16, INT8, INT4, or INT2.');
+    }
+
     const input = Array.from(values, (value) => Number(value));
-    if (!Number.isInteger(qmin) || !Number.isInteger(qmax) || qmin >= qmax) {
-        throw new Error('Quantization range is invalid.');
-    }
-    if (input.length === 0) {
-        return { values: [], dequantized: [], error: [], scale: 1, zeroPoint: 0, minimum: 0, maximum: 0 };
-    }
     if (!input.every((value) => Number.isFinite(value))) {
         throw new Error('Quantization values must be finite numbers.');
     }
+
+    const qmin = -(2 ** (bits - 1));
+    const qmax = (2 ** (bits - 1)) - 1;
+    const weightReduction = 1 - (bits / 32);
+
+    if (input.length === 0) {
+        return {
+            values: [],
+            dequantized: [],
+            error: [],
+            scale: 1,
+            zeroPoint: 0,
+            minimum: 0,
+            maximum: 0,
+            bits,
+            precision: `INT${bits}`,
+            qmin,
+            qmax,
+            weightReduction
+        };
+    }
+
     const minimum = Math.min(...input);
     const maximum = Math.max(...input);
     let scale = (maximum - minimum) / (qmax - qmin);
     let zeroPoint = 0;
+
     if (scale === 0) {
         const magnitude = Math.max(Math.abs(minimum), Math.abs(maximum));
         scale = magnitude === 0 ? 1 : magnitude / Math.max(Math.abs(qmin), Math.abs(qmax));
@@ -40,9 +62,13 @@ compression.quantize = (values, qmin = -128, qmax = 127) => {
         zeroPoint = Math.round(qmin - minimum / scale);
         zeroPoint = Math.max(qmin, Math.min(qmax, zeroPoint));
     }
-    const quantized = input.map((value) => Math.max(qmin, Math.min(qmax, Math.round(value / scale + zeroPoint))));
+
+    const quantized = input.map((value) =>
+        Math.max(qmin, Math.min(qmax, Math.round(value / scale + zeroPoint)))
+    );
     const dequantized = quantized.map((value) => (value - zeroPoint) * scale);
     const error = input.map((value, index) => Math.abs(value - dequantized[index]));
+
     return {
         values: quantized,
         dequantized,
@@ -50,7 +76,12 @@ compression.quantize = (values, qmin = -128, qmax = 127) => {
         scale,
         zeroPoint,
         minimum,
-        maximum
+        maximum,
+        bits,
+        precision: `INT${bits}`,
+        qmin,
+        qmax,
+        weightReduction
     };
 };
 
