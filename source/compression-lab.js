@@ -5,6 +5,7 @@ const lab = {};
 
 lab.maxValues = 100000;
 lab.inferenceMaxValues = 500000;
+lab.previewRows = 10;
 lab.classLabels = [
     'airplane', 'automobile', 'bird', 'cat', 'deer',
     'dog', 'frog', 'horse', 'ship', 'truck'
@@ -32,10 +33,8 @@ lab.flatten = (value, output, limit = lab.maxValues) => {
                 return;
             }
         }
-    } else if (typeof value === 'number') {
-        if (Number.isFinite(value)) {
-            output.push(value);
-        }
+    } else if (typeof value === 'number' && Number.isFinite(value)) {
+        output.push(value);
     } else if (typeof value === 'bigint') {
         const number = Number(value);
         if (Number.isSafeInteger(number)) {
@@ -102,11 +101,8 @@ lab.activation = (node) => {
     if (Array.isArray(node.chain)) {
         for (const item of node.chain) {
             const type = item && item.type ? String(item.type.name || '').toLowerCase() : '';
-            if (type === 'relu') {
-                return 'relu';
-            }
-            if (type === 'softmax') {
-                return 'softmax';
+            if (type === 'relu' || type === 'softmax') {
+                return type;
             }
             if (type === 'activation') {
                 const value = lab.attribute(item, 'activation', 'linear');
@@ -151,10 +147,7 @@ lab.tensor = async (entry, cache, override) => {
         cache.set(entry.initializer, data);
     }
     if (override && override.initializer === entry.initializer) {
-        return {
-            values: override.values,
-            shape: data.shape
-        };
+        return { values: override.values, shape: data.shape };
     }
     return data;
 };
@@ -231,8 +224,7 @@ lab.conv2d = async (data, node, cache, override) => {
                         }
                     }
                 }
-                const outputIndex = ((outputY * outputWidth + outputX) * outputChannels) + outputChannel;
-                output[outputIndex] = sum;
+                output[((outputY * outputWidth + outputX) * outputChannels) + outputChannel] = sum;
             }
         }
     }
@@ -276,7 +268,6 @@ lab.maxPooling2d = (data, node) => {
     }
 
     const output = new Array(outputHeight * outputWidth * channels).fill(Number.NEGATIVE_INFINITY);
-
     for (let outputY = 0; outputY < outputHeight; outputY++) {
         for (let outputX = 0; outputX < outputWidth; outputX++) {
             for (let channel = 0; channel < channels; channel++) {
@@ -291,16 +282,13 @@ lab.maxPooling2d = (data, node) => {
                         if (inputX < 0 || inputX >= width) {
                             continue;
                         }
-                        const inputIndex = ((inputY * width + inputX) * channels) + channel;
-                        maximum = Math.max(maximum, data.values[inputIndex]);
+                        maximum = Math.max(maximum, data.values[((inputY * width + inputX) * channels) + channel]);
                     }
                 }
-                const outputIndex = ((outputY * outputWidth + outputX) * channels) + channel;
-                output[outputIndex] = maximum;
+                output[((outputY * outputWidth + outputX) * channels) + channel] = maximum;
             }
         }
     }
-
     return { values: output, shape: [outputHeight, outputWidth, channels] };
 };
 
@@ -322,7 +310,6 @@ lab.dense = async (data, node, cache, override) => {
 
     const output = new Array(outputSize).fill(0);
     const biasValues = bias ? bias.values : null;
-
     for (let outputIndex = 0; outputIndex < outputSize; outputIndex++) {
         let sum = biasValues ? biasValues[outputIndex] : 0;
         for (let inputIndex = 0; inputIndex < inputSize; inputIndex++) {
@@ -342,11 +329,7 @@ lab.infer = async (graph, input, cache, override = null) => {
         throw new Error('Top-3 preview could not access the current model graph.');
     }
 
-    let data = {
-        values: input.values.slice(),
-        shape: input.shape.slice()
-    };
-
+    let data = { values: input.values.slice(), shape: input.shape.slice() };
     for (const node of graph.nodes) {
         const type = node && node.type ? String(node.type.name || '') : '';
         switch (type) {
@@ -374,7 +357,6 @@ lab.infer = async (graph, input, cache, override = null) => {
                 throw new Error(`Top-3 preview does not support layer '${type || node.name || '?'}'.`);
         }
     }
-
     return data.values;
 };
 
@@ -425,7 +407,6 @@ lab.loadImage = async (document, file, graph) => {
             values[output++] = pixels[index + 1] / 255;
             values[output++] = pixels[index + 2] / 255;
         }
-
         return { values, shape: [height, width, channels] };
     } finally {
         window.URL.revokeObjectURL(url);
@@ -472,9 +453,7 @@ lab.styles = (document) => {
 .compression-lab th, .compression-lab td { border-bottom: 1px solid #ddd; padding: 4px 6px; text-align: right; white-space: nowrap; }
 .compression-lab th:first-child, .compression-lab td:first-child { text-align: left; }
 .compression-lab-error { color: #b00020; margin-top: 6px; }
-@media (max-width: 520px) {
-    .compression-lab-predictions { grid-template-columns: 1fr; }
-}
+@media (max-width: 520px) { .compression-lab-predictions { grid-template-columns: 1fr; } }
 @media (prefers-color-scheme: dark) {
     .compression-lab-note { color: #aaa; }
     .compression-lab button { background: #555; color: #eee; border-color: #777; }
@@ -491,9 +470,11 @@ lab.table = (document, headers) => {
     const table = document.createElement('table');
     const head = document.createElement('thead');
     const row = document.createElement('tr');
+    const cells = [];
     for (const header of headers) {
         const cell = document.createElement('th');
         cell.textContent = header;
+        cells.push(cell);
         row.appendChild(cell);
     }
     head.appendChild(row);
@@ -501,7 +482,7 @@ lab.table = (document, headers) => {
     table.appendChild(head);
     table.appendChild(body);
     wrapper.appendChild(table);
-    return { wrapper, body };
+    return { wrapper, body, headers: cells };
 };
 
 lab.fillTable = (body, rows) => {
@@ -549,7 +530,6 @@ lab.renderTop3 = (target, values, emptyText) => {
         target.content.textContent = emptyText;
         return;
     }
-
     const document = target.content.ownerDocument;
     const list = document.createElement('ol');
     for (const item of lab.top3(values)) {
@@ -677,6 +657,9 @@ lab.attach = (sidebar) => {
     pruningSummary.className = 'compression-lab-summary';
     pruningPanel.appendChild(pruningSummary);
 
+    const pruningTable = lab.table(document, ['Index', 'Original', 'Pruned']);
+    pruningPanel.appendChild(pruningTable.wrapper);
+
     const pruningPredictions = lab.predictionPair(document, 'Pruned Top-3');
     pruningPanel.appendChild(pruningPredictions.root);
 
@@ -714,13 +697,19 @@ lab.attach = (sidebar) => {
 
     const quantizationSummary = document.createElement('div');
     quantizationSummary.className = 'compression-lab-summary';
-    quantizationSummary.textContent = 'Choose INT16, INT8, INT4, or INT2, then press Apply Quantization.';
     quantizationPanel.appendChild(quantizationSummary);
+
+    const quantizationParameters = document.createElement('div');
+    quantizationParameters.className = 'compression-lab-summary';
+    quantizationPanel.appendChild(quantizationParameters);
 
     const quantizationNote = document.createElement('div');
     quantizationNote.className = 'compression-lab-note';
     quantizationNote.textContent = 'Weight Reduction compares bits per weight with FP32. It is not the serialized model file size.';
     quantizationPanel.appendChild(quantizationNote);
+
+    const quantizationTable = lab.table(document, ['Index', 'FP32 Original', 'INT8', 'Dequantized', '|Error|']);
+    quantizationPanel.appendChild(quantizationTable.wrapper);
 
     const quantizationPredictions = lab.predictionPair(document, 'Quantized Top-3');
     quantizationPanel.appendChild(quantizationPredictions.root);
@@ -755,15 +744,43 @@ lab.attach = (sidebar) => {
         const sparsityBefore = before.length === 0 ? 0 : zeroBefore / before.length;
         const sparsityAfter = after.length === 0 ? 0 : zeroAfter / after.length;
         pruningSummary.textContent = `Sparsity: ${(sparsityBefore * 100).toFixed(1)}% → ${(sparsityAfter * 100).toFixed(1)}%  (${zeroAfter}/${after.length} zeros)`;
+
+        const rows = [];
+        const count = Math.min(lab.previewRows, before.length, after.length);
+        for (let index = 0; index < count; index++) {
+            rows.push([String(index), lab.format(before[index]), lab.format(after[index])]);
+        }
+        lab.fillTable(pruningTable.body, rows);
     };
 
     const renderQuantization = () => {
         const result = state.quantization;
+        const selectedPrecision = `INT${precision.value}`;
+        quantizationTable.headers[2].textContent = result ? result.precision : selectedPrecision;
+
         if (!result) {
             quantizationSummary.textContent = 'Choose INT16, INT8, INT4, or INT2, then press Apply Quantization.';
+            quantizationParameters.textContent = 'Scale: — · Zero Point: —';
+            lab.fillTable(quantizationTable.body, []);
             return;
         }
-        quantizationSummary.textContent = `Precision: ${result.precision} · Weight Reduction: ${(result.weightReduction * 100).toFixed(2).replace(/\.00$/, '')}%`;
+
+        const reduction = (result.weightReduction * 100).toFixed(2).replace(/\.00$/, '');
+        quantizationSummary.textContent = `Precision: ${result.precision} · Weight Reduction: ${reduction}%`;
+        quantizationParameters.textContent = `Scale: ${lab.format(result.scale)} · Zero Point: ${result.zeroPoint}`;
+
+        const rows = [];
+        const count = Math.min(lab.previewRows, state.original.length, result.values.length);
+        for (let index = 0; index < count; index++) {
+            rows.push([
+                String(index),
+                lab.format(state.original[index]),
+                String(result.values[index]),
+                lab.format(result.dequantized[index]),
+                lab.format(result.error[index])
+            ]);
+        }
+        lab.fillTable(quantizationTable.body, rows);
     };
 
     const ensureOriginalPrediction = async () => {
@@ -878,6 +895,12 @@ lab.attach = (sidebar) => {
 
     selector.addEventListener('change', () => {
         loadSelected();
+    });
+
+    precision.addEventListener('change', () => {
+        state.quantization = null;
+        renderQuantization();
+        updateQuantizationPredictions();
     });
 
     imageInput.addEventListener('change', async () => {
