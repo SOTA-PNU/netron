@@ -33,22 +33,27 @@ Open a model in the browser and click a layer that has weight tensors.
    - the original precision is FP32,
    - choose `INT16`, `INT8`, `INT4`, or `INT2`,
    - apply quantization to the selected tensor,
-   - observe Weight Reduction,
+   - observe Weight Reduction, Scale, Zero Point, dequantized values, and absolute error,
    - compare Original Top-3 and Quantized Top-3.
 7. Use **Reset** to return to the original in-memory working copy.
 
 ## Quantization view
 
-The Quantization tab intentionally keeps the classroom UI small:
+The Quantization tab uses **symmetric per-tensor weight quantization** for the classroom preview:
 
 - **Original Precision:** FP32
 - **Quantization Precision:** INT16 / INT8 / INT4 / INT2
+- **Zero Point:** always `0`
+- **Scale:** calculated from the largest absolute weight value
 - **Weight Reduction:** reduction in bits per weight relative to FP32
   - INT16: 50%
   - INT8: 75%
   - INT4: 87.5%
   - INT2: 93.75%
+- **Weight table:** FP32 original, quantized integer value, dequantized value, and absolute error
 - **Top-3 Prediction:** original model vs quantized working copy
+
+For `bits`, the preview uses `qmax = 2^(bits-1)-1`, `qmin = -qmax`, `scale = max(abs(min), abs(max)) / qmax`, and `zero_point = 0`.
 
 Weight Reduction is not the serialized `.keras` or `.tflite` file-size reduction.
 
@@ -70,12 +75,13 @@ If an unsupported layer or input format is encountered, the Compression Lab repo
 
 - The panel uses a **non-destructive working copy** of the selected weight tensor.
 - It does **not** overwrite or serialize the original `.keras` or `.tflite` file.
-- Quantization is an educational per-tensor affine preview at the selected integer precision.
-- A real TensorFlow/LiteRT converter can use a different scheme, such as symmetric or per-channel quantization, so internal integer weights can differ from the preview.
+- Quantization is an educational symmetric per-tensor weight preview at the selected integer precision.
+- A real TensorFlow/LiteRT converter can use a different scheme, including per-channel quantization, so internal integer weights can differ from the preview.
 - No deployment model is generated.
+- The pruning threshold field keeps normal text-editing behavior, including Backspace, even though Netron also uses Backspace as a global navigation shortcut.
 
 ## Files added by this fork
 
-- `source/compression.js`: Pruning and selectable INT16 / INT8 / INT4 / INT2 quantization calculations.
+- `source/compression.js`: Pruning and selectable INT16 / INT8 / INT4 / INT2 symmetric quantization calculations, plus the Compression Lab input guard.
 - `source/compression-lab.js`: Netron sidebar UI integration and classroom Top-3 preview.
 - `source/index.js`: loads the Compression Lab module in the browser build.
