@@ -28,8 +28,10 @@ compression.quantize = (values, bits = 8) => {
         throw new Error('Quantization values must be finite numbers.');
     }
 
-    const qmin = -(2 ** (bits - 1));
+    // Symmetric per-tensor weight quantization. The effective integer range is
+    // [-qmax, qmax] so zero maps exactly to integer zero (zero point = 0).
     const qmax = (2 ** (bits - 1)) - 1;
+    const qmin = -qmax;
     const weightReduction = 1 - (bits / 32);
 
     if (input.length === 0) {
@@ -51,22 +53,14 @@ compression.quantize = (values, bits = 8) => {
 
     const minimum = Math.min(...input);
     const maximum = Math.max(...input);
-    let scale = (maximum - minimum) / (qmax - qmin);
-    let zeroPoint = 0;
-
-    if (scale === 0) {
-        const magnitude = Math.max(Math.abs(minimum), Math.abs(maximum));
-        scale = magnitude === 0 ? 1 : magnitude / Math.max(Math.abs(qmin), Math.abs(qmax));
-        zeroPoint = 0;
-    } else {
-        zeroPoint = Math.round(qmin - minimum / scale);
-        zeroPoint = Math.max(qmin, Math.min(qmax, zeroPoint));
-    }
+    const magnitude = Math.max(Math.abs(minimum), Math.abs(maximum));
+    const scale = magnitude === 0 ? 1 : magnitude / qmax;
+    const zeroPoint = 0;
 
     const quantized = input.map((value) =>
-        Math.max(qmin, Math.min(qmax, Math.round(value / scale + zeroPoint)))
+        Math.max(qmin, Math.min(qmax, Math.round(value / scale)))
     );
-    const dequantized = quantized.map((value) => (value - zeroPoint) * scale);
+    const dequantized = quantized.map((value) => value * scale);
     const error = input.map((value, index) => Math.abs(value - dequantized[index]));
 
     return {
@@ -84,6 +78,26 @@ compression.quantize = (values, bits = 8) => {
         weightReduction
     };
 };
+
+compression.installInputGuard = () => {
+    if (typeof document === 'undefined' || document.__compressionLabInputGuard) {
+        return;
+    }
+    document.addEventListener('keydown', (event) => {
+        const target = event.target;
+        const editable = target && typeof target.closest === 'function' && target.closest('.compression-lab') &&
+            (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+        if (editable && (event.key === 'Backspace' || event.keyCode === 8)) {
+            // Netron uses Backspace as a global navigation shortcut. Stop the
+            // event before it reaches the window handler, but do not prevent
+            // the input's normal Backspace behavior.
+            event.stopPropagation();
+        }
+    });
+    document.__compressionLabInputGuard = true;
+};
+
+compression.installInputGuard();
 
 export const prune = compression.prune;
 export const quantize = compression.quantize;
