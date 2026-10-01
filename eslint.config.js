@@ -239,6 +239,14 @@ export default [
         }
     },
     {
+        files: ['source/compression-lab.js'],
+        rules: {
+            'no-await-in-loop': 'off',
+            'prefer-rest-params': 'off',
+            'require-atomic-updates': 'off'
+        }
+    },
+    {
         files: ['source/index.js'],
         languageOptions: {
             sourceType: 'script',

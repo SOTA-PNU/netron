@@ -28,8 +28,6 @@ compression.quantize = (values, bits = 8) => {
         throw new Error('Quantization values must be finite numbers.');
     }
 
-    // Symmetric per-tensor weight quantization. The effective integer range is
-    // [-qmax, qmax] so zero maps exactly to integer zero (zero point = 0).
     const qmax = (2 ** (bits - 1)) - 1;
     const qmin = -qmax;
     const weightReduction = 1 - (bits / 32);
@@ -80,7 +78,8 @@ compression.quantize = (values, bits = 8) => {
 };
 
 compression.installInputGuard = () => {
-    if (typeof document === 'undefined' || document.__compressionLabInputGuard) {
+    const document = globalThis.document;
+    if (!document || document.__compressionLabInputGuard) {
         return;
     }
     document.addEventListener('keydown', (event) => {
@@ -88,9 +87,6 @@ compression.installInputGuard = () => {
         const editable = target && typeof target.closest === 'function' && target.closest('.compression-lab') &&
             (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
         if (editable && (event.key === 'Backspace' || event.keyCode === 8)) {
-            // Netron uses Backspace as a global navigation shortcut. Stop the
-            // event before it reaches the window handler, but do not prevent
-            // the input's normal Backspace behavior.
             event.stopPropagation();
         }
     });
