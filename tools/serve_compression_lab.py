@@ -10,25 +10,14 @@ from __future__ import annotations
 
 import argparse
 import os
-import socket
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
-def local_ip() -> str | None:
-    """Return a useful LAN address when one can be determined."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.connect(("8.8.8.8", 80))
-        return sock.getsockname()[0]
-    except OSError:
-        return None
-    finally:
-        sock.close()
-
-
 class NoCacheHTTPRequestHandler(SimpleHTTPRequestHandler):
-    """Serve classroom assets without browser caching during development."""
+    """Serve browser modules with a consistent type and fresh classroom assets."""
+
+    extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".js": "application/javascript"}
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -55,11 +44,8 @@ def main() -> None:
     os.chdir(root)
     server = ThreadingHTTPServer((args.host, args.port), NoCacheHTTPRequestHandler)
 
-    print("Netron Compression Lab is running.")
-    print(f"Local:   http://127.0.0.1:{args.port}")
-    address = local_ip()
-    if address:
-        print(f"Network: http://{address}:{args.port}")
+    print(f"Netron Compression Lab is running on port {server.server_port}.")
+    print("Access it through the JupyterLab proxy URL.")
     print("Press Ctrl+C to stop.")
 
     try:

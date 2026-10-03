@@ -5,6 +5,7 @@ on:
     branches: [ feature/compression-lab ]
     paths:
       - 'source/**'
+      - 'test/compression*.js'
       - 'tools/create_offline_bundle.py'
       - 'tools/serve_compression_lab.py'
       - 'package.json'
@@ -25,6 +26,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+
+      - name: Set up Node for regression tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify compression calculations and UI behavior
+        run: |
+          node test/compression.js
+          node test/compression-lab.js
 
       - name: Create npm-free offline bundle
         run: python tools/create_offline_bundle.py

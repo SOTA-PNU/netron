@@ -407,7 +407,7 @@ lab.loadImage = async (document, file, graph) => {
             values[output++] = pixels[index + 1] / 255;
             values[output++] = pixels[index + 2] / 255;
         }
-        return { values, shape: [height, width, channels] };
+        return { values, shape: [height, width, channels], preview: canvas.toDataURL('image/png') };
     } finally {
         window.URL.revokeObjectURL(url);
     }
@@ -437,6 +437,7 @@ lab.styles = (document) => {
 .compression-lab select { max-width: 100%; min-width: 180px; }
 .compression-lab input[type='number'] { width: 110px; }
 .compression-lab input[type='file'] { max-width: 100%; }
+.compression-lab-image { width: 80px; height: 80px; object-fit: contain; }
 .compression-lab button { min-height: 28px; border: 1px solid #aaa; border-radius: 4px; background: #f4f4f4; color: #222; padding: 3px 9px; font: inherit; cursor: pointer; }
 .compression-lab button:hover { background: #e8e8e8; }
 .compression-lab button:disabled { opacity: 0.55; cursor: default; }
@@ -483,6 +484,51 @@ lab.table = (document, headers) => {
     table.appendChild(body);
     wrapper.appendChild(table);
     return { wrapper, body, headers: cells };
+};
+
+lab.pager = (document, label) => {
+    const root = document.createElement('div');
+    root.className = 'compression-lab-row';
+    const range = document.createElement('span');
+    range.setAttribute('role', 'status');
+    const previous = document.createElement('button');
+    previous.type = 'button';
+    previous.textContent = 'Previous';
+    previous.setAttribute('aria-label', `${label} previous weights`);
+    const next = document.createElement('button');
+    next.type = 'button';
+    next.textContent = 'Next';
+    next.setAttribute('aria-label', `${label} next weights`);
+    root.appendChild(range);
+    root.appendChild(previous);
+    root.appendChild(next);
+
+    const pager = { root, page: 0, count: 0, enabled: true, onChange: () => {} };
+    pager.render = (count = pager.count) => {
+        pager.count = count;
+        pager.page = Math.max(0, Math.min(pager.page, Math.ceil(count / lab.previewRows) - 1));
+        const start = pager.page * lab.previewRows;
+        const end = Math.min(start + lab.previewRows, count);
+        range.textContent = count === 0 ? 'No weights to display.' :
+            `Showing ${start + 1}–${end} of ${count.toLocaleString()} weights`;
+        previous.disabled = !pager.enabled || start === 0;
+        next.disabled = !pager.enabled || end >= count;
+        return { start, end };
+    };
+    previous.addEventListener('click', () => {
+        if (!previous.disabled) {
+            pager.page--;
+            pager.onChange();
+        }
+    });
+    next.addEventListener('click', () => {
+        if (!next.disabled) {
+            pager.page++;
+            pager.onChange();
+        }
+    });
+    pager.render();
+    return pager;
 };
 
 lab.fillTable = (body, rows) => {
@@ -542,7 +588,7 @@ lab.renderTop3 = (target, values, emptyText) => {
 
 lab.attach = (sidebar) => {
     const node = sidebar._node;
-    const entries = lab.weights(node);
+    const entries = lab.weights(node).filter((entry) => /kernel|weight/i.test(entry.name) && !/bias/i.test(entry.name));
     if (entries.length === 0 || sidebar.element.querySelector('.compression-lab')) {
         return;
     }
@@ -570,7 +616,7 @@ lab.attach = (sidebar) => {
     entries.forEach((entry, index) => {
         const option = document.createElement('option');
         option.value = String(index);
-        const recommended = /kernel|weight/i.test(entry.name) ? ' · recommended' : '';
+        const recommended = /kernel|weight/i.test(entry.name) ? ', recommended' : '';
         option.textContent = `${entry.name} (${lab.shape(entry)})${recommended}`;
         selector.appendChild(option);
     });
@@ -605,6 +651,11 @@ lab.attach = (sidebar) => {
     imageHelp.className = 'compression-lab-note';
     imageHelp.textContent = 'Load an image to compare the model Top-3 before and after compression. Classroom CIFAR-10 images are resized to the model input and normalized to 0–1.';
     root.appendChild(imageHelp);
+
+    const imagePreview = document.createElement('img');
+    imagePreview.className = 'compression-lab-image';
+    imagePreview.hidden = true;
+    root.appendChild(imagePreview);
 
     const tabs = document.createElement('div');
     tabs.className = 'compression-lab-tabs';
@@ -657,6 +708,14 @@ lab.attach = (sidebar) => {
     pruningSummary.className = 'compression-lab-summary';
     pruningPanel.appendChild(pruningSummary);
 
+    const appliedThreshold = document.createElement('div');
+    appliedThreshold.className = 'compression-lab-note';
+    appliedThreshold.setAttribute('role', 'status');
+    pruningPanel.appendChild(appliedThreshold);
+
+    const pruningPager = lab.pager(document, 'Pruning');
+    pruningPanel.appendChild(pruningPager.root);
+
     const pruningTable = lab.table(document, ['Index', 'Original', 'Pruned']);
     pruningPanel.appendChild(pruningTable.wrapper);
 
@@ -708,6 +767,9 @@ lab.attach = (sidebar) => {
     quantizationNote.textContent = 'Weight Reduction compares bits per weight with FP32. It is not the serialized model file size.';
     quantizationPanel.appendChild(quantizationNote);
 
+    const quantizationPager = lab.pager(document, 'Quantization');
+    quantizationPanel.appendChild(quantizationPager.root);
+
     const quantizationTable = lab.table(document, ['Index', 'FP32 Original', 'INT8', 'Dequantized', '|Error|']);
     quantizationPanel.appendChild(quantizationTable.wrapper);
 
@@ -722,6 +784,7 @@ lab.attach = (sidebar) => {
     const state = {
         original: [],
         pruned: [],
+        appliedThreshold: null,
         quantization: null,
         input: null,
         originalPrediction: null,
@@ -729,12 +792,7 @@ lab.attach = (sidebar) => {
     };
 
     const updateTensorHelp = () => {
-        const entry = entries[selector.selectedIndex];
-        if (/bias/i.test(entry.name)) {
-            tensorHelp.textContent = 'bias contains one additive offset per output. It can be previewed here, but use kernel for the main pruning/quantization exercise.';
-        } else {
-            tensorHelp.textContent = 'kernel contains the connection weights between inputs and outputs. This is the recommended tensor for the class exercise.';
-        }
+        tensorHelp.textContent = 'kernel contains the connection weights between inputs and outputs. Bias values are preserved in model predictions.';
     };
 
     const renderPruning = (after) => {
@@ -744,10 +802,12 @@ lab.attach = (sidebar) => {
         const sparsityBefore = before.length === 0 ? 0 : zeroBefore / before.length;
         const sparsityAfter = after.length === 0 ? 0 : zeroAfter / after.length;
         pruningSummary.textContent = `Sparsity: ${(sparsityBefore * 100).toFixed(1)}% → ${(sparsityAfter * 100).toFixed(1)}%  (${zeroAfter}/${after.length} zeros)`;
+        appliedThreshold.textContent = state.appliedThreshold === null ?
+            'Applied Threshold: — (original weights)' : `Applied Threshold: ${state.appliedThreshold}`;
 
         const rows = [];
-        const count = Math.min(lab.previewRows, before.length, after.length);
-        for (let index = 0; index < count; index++) {
+        const { start, end } = pruningPager.render(Math.min(before.length, after.length));
+        for (let index = start; index < end; index++) {
             rows.push([String(index), lab.format(before[index]), lab.format(after[index])]);
         }
         lab.fillTable(pruningTable.body, rows);
@@ -760,18 +820,19 @@ lab.attach = (sidebar) => {
 
         if (!result) {
             quantizationSummary.textContent = 'Choose INT16, INT8, INT4, or INT2, then press Apply Quantization.';
-            quantizationParameters.textContent = 'Scale: — · Zero Point: —';
+            quantizationParameters.textContent = 'Scale: —, Zero Point: —';
+            quantizationPager.render(0);
             lab.fillTable(quantizationTable.body, []);
             return;
         }
 
         const reduction = (result.weightReduction * 100).toFixed(2).replace(/\.00$/, '');
-        quantizationSummary.textContent = `Precision: ${result.precision} · Weight Reduction: ${reduction}%`;
-        quantizationParameters.textContent = `Scale: ${lab.format(result.scale)} · Zero Point: ${result.zeroPoint}`;
+        quantizationSummary.textContent = `Precision: ${result.precision} (32bit → ${result.bits}bit), Weight Reduction: ${reduction}%, Mean Absolute Error (all ${state.original.length.toLocaleString()} weights): ${lab.format(result.meanAbsoluteError)}`;
+        quantizationParameters.textContent = `Scale: ${lab.format(result.scale)}, Zero Point: ${result.zeroPoint}`;
 
         const rows = [];
-        const count = Math.min(lab.previewRows, state.original.length, result.values.length);
-        for (let index = 0; index < count; index++) {
+        const { start, end } = quantizationPager.render(Math.min(state.original.length, result.values.length));
+        for (let index = start; index < end; index++) {
             rows.push([
                 String(index),
                 lab.format(state.original[index]),
@@ -782,6 +843,9 @@ lab.attach = (sidebar) => {
         }
         lab.fillTable(quantizationTable.body, rows);
     };
+
+    pruningPager.onChange = () => renderPruning(state.pruned);
+    quantizationPager.onChange = () => renderQuantization();
 
     const ensureOriginalPrediction = async () => {
         if (!state.input) {
@@ -854,6 +918,10 @@ lab.attach = (sidebar) => {
         applyQuantization.disabled = !enabled;
         resetQuantization.disabled = !enabled;
         imageInput.disabled = !enabled;
+        pruningPager.enabled = enabled;
+        quantizationPager.enabled = enabled;
+        pruningPager.render();
+        quantizationPager.render();
     };
 
     const loadSelected = async () => {
@@ -865,9 +933,12 @@ lab.attach = (sidebar) => {
             const values = await lab.load(entry);
             state.original = values.slice();
             state.pruned = values.slice();
+            state.appliedThreshold = null;
             state.quantization = null;
+            pruningPager.page = 0;
+            quantizationPager.page = 0;
             updateTensorHelp();
-            info.textContent = `Layer: ${node.name || (node.type ? node.type.name : '?')} · tensor: ${entry.name} · shape: ${lab.shape(entry)} · ${values.length.toLocaleString()} values`;
+            info.textContent = `Layer: ${node.name || (node.type ? node.type.name : '?')}, tensor: ${entry.name}, shape: ${lab.shape(entry)}, ${values.length.toLocaleString()} values`;
             renderPruning(state.pruned);
             renderQuantization();
             setEnabled(true);
@@ -906,6 +977,12 @@ lab.attach = (sidebar) => {
     imageInput.addEventListener('change', async () => {
         error.textContent = '';
         const [file] = Array.from(imageInput.files || []);
+        imagePreview.hidden = true;
+        imagePreview.removeAttribute('src');
+        imagePreview.alt = '';
+        state.input = null;
+        state.originalPrediction = null;
+        await updatePredictions();
         if (!file) {
             state.input = null;
             state.originalPrediction = null;
@@ -914,11 +991,14 @@ lab.attach = (sidebar) => {
             return;
         }
         try {
-            imageInput.disabled = true;
+            setEnabled(false);
             imageHelp.textContent = `Loading ${file.name}…`;
             state.input = await lab.loadImage(document, file, graph);
             state.originalPrediction = null;
-            imageHelp.textContent = `Test image: ${file.name} · resized to ${state.input.shape[1]} × ${state.input.shape[0]} · normalized to 0–1`;
+            imagePreview.src = state.input.preview;
+            imagePreview.alt = `Test image: ${file.name}`;
+            imagePreview.hidden = false;
+            imageHelp.textContent = `Test image: ${file.name}, resized to ${state.input.shape[1]} × ${state.input.shape[0]}, normalized to 0–1`;
             await updatePredictions();
         } catch (err) {
             state.input = null;
@@ -927,7 +1007,7 @@ lab.attach = (sidebar) => {
             imageHelp.textContent = 'Top-3 preview unavailable for this image.';
             await updatePredictions();
         } finally {
-            imageInput.disabled = false;
+            setEnabled(true);
         }
     });
 
@@ -937,6 +1017,7 @@ lab.attach = (sidebar) => {
             const value = Number(threshold.value);
             const result = prune(state.original, value);
             state.pruned = result.values.slice();
+            state.appliedThreshold = value;
             renderPruning(state.pruned);
             await updatePruningPredictions();
         } catch (err) {
@@ -946,6 +1027,7 @@ lab.attach = (sidebar) => {
 
     resetPruning.addEventListener('click', async () => {
         state.pruned = state.original.slice();
+        state.appliedThreshold = null;
         renderPruning(state.pruned);
         error.textContent = '';
         await updatePruningPredictions();
